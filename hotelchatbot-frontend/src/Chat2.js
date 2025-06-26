@@ -1,12 +1,9 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import keycloak from './keycloak'
 import { useKeycloak } from '@react-keycloak/web'
-import { Client } from '@stomp/stompjs'
-import SockJS from 'sockjs-client'
 
 export function Chat({ setHasMessages }) {
   const { keycloak } = useKeycloak()
-  const stompClientRef = useRef(null)
 
   const [sessionId, setSessionId] = useState(() =>
     localStorage.getItem('chatSessionId')
@@ -15,48 +12,6 @@ export function Chat({ setHasMessages }) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // Connect to WebSocket when session is ready
-  useEffect(() => {
-    if (sessionId && keycloak.authenticated) {
-      connectWebSocket()
-    }
-
-    return () => {
-      if (stompClientRef.current) {
-        stompClientRef.current.deactivate()
-      }
-    }
-  }, [sessionId, keycloak.authenticated])
-
-  const connectWebSocket = () => {
-    const socket = new SockJS('http://localhost:8081/chat-websocket')
-    const stompClient = new Client({
-      webSocketFactory: () => socket,
-      onConnect: () => {
-        console.log('Connected to chat')
-
-        // Subscribe to messages for this session
-        stompClient.subscribe(`/topic/session/${sessionId}`, (message) => {
-          const chatMessage = JSON.parse(message.body)
-          setMessages((prev) => [
-            ...prev,
-            {
-              sender: chatMessage.sender,
-              content: chatMessage.content,
-            },
-          ])
-        })
-      },
-      onStompError: (frame) => {
-        console.error('WebSocket error:', frame)
-      },
-    })
-
-    stompClient.activate()
-    stompClientRef.current = stompClient
-  }
-
-  // Load initial messages and create session
   useEffect(() => {
     if (!sessionId) {
       createNewSession()
@@ -76,6 +31,26 @@ export function Chat({ setHasMessages }) {
   useEffect(() => {
     if (setHasMessages) setHasMessages(messages.length > 0)
   }, [messages, setHasMessages])
+
+  // function createNewSession() {
+  //   // fetch('http://localhost:8083/api/chatbot/api/chatbot/session', {
+  //   //   method: 'POST',
+  //   //   headers: { 'Content-Type': 'application/json' },
+  //   // })
+  //   fetch('http://localhost:8083/api/chatbot/api/chatbot/session', {
+  //     method: 'POST',
+  //     headers: {
+  //       'Content-Type': 'application/json',
+  //       Authorization: `Bearer ${keycloak.token}`,
+  //     },
+  //   })
+  //     .then((res) => res.json())
+  //     .then((data) => {
+  //       setSessionId(data.id)
+  //       localStorage.setItem('chatSessionId', data.id)
+  //       setMessages([])
+  //     })
+  // }
 
   function createNewSession() {
     fetch('http://localhost:8083/api/chatbot/api/chatbot/session', {
@@ -99,17 +74,51 @@ export function Chat({ setHasMessages }) {
           localStorage.setItem('chatSessionId', data.id)
           setMessages([])
         } else {
+          // Optionally handle error here
           console.error(data.error || 'Failed to create session')
         }
       })
   }
 
+  useEffect(() => {
+    if (!sessionId) {
+      createNewSession()
+    } else {
+      //   fetch(
+      //     `http://localhost:8083/api/chatbot/api/chatbot/session/${sessionId}/messages`
+      //   )
+      fetch(
+        `http://localhost:8083/api/chatbot/api/chatbot/session/${sessionId}/messages`,
+        {
+          headers: {
+            Authorization: `Bearer ${keycloak.token}`,
+          },
+        }
+      )
+        .then((res) => {
+          if (res.ok) return res.json()
+          throw new Error('Session not found')
+        })
+        .then(setMessages)
+        .catch(() => {
+          createNewSession()
+        })
+    }
+  }, [sessionId])
+
+  // send message, get reply
   const sendMessage = async () => {
     if (!input.trim()) return
     setLoading(true)
-    setInput('')
-
     try {
+      //   const res = await fetch(
+      //     `http://localhost:8083/api/chatbot/api/chatbot/session/${sessionId}/message`,
+      //     {
+      //       method: 'POST',
+      //       headers: { 'Content-Type': 'application/json' },
+      //       body: JSON.stringify(input),
+      //     }
+      //   )
       const res = await fetch(
         `http://localhost:8083/api/chatbot/api/chatbot/session/${sessionId}/message`,
         {
@@ -121,13 +130,17 @@ export function Chat({ setHasMessages }) {
           body: JSON.stringify(input),
         }
       )
-
       if (res.status === 404) {
+        // Session not found, create new session and retry
         await createNewSession()
+        setLoading(false)
         return
       }
-    } catch (error) {
-      console.error('Error sending message:', error)
+      // get all messages again
+      fetch(`http://localhost:8081/api/chatbot/session/${sessionId}/messages`)
+        .then((res) => res.json())
+        .then(setMessages)
+      setInput('')
     } finally {
       setLoading(false)
     }
@@ -158,20 +171,11 @@ export function Chat({ setHasMessages }) {
           >
             <div
               style={{
-                background:
-                  m.sender === 'user'
-                    ? '#007bff'
-                    : m.sender === 'agent'
-                    ? '#28a745'
-                    : '#e6f4ea',
-                color:
-                  m.sender === 'user' || m.sender === 'agent'
-                    ? '#fff'
-                    : '#28a745',
+                background: m.sender === 'user' ? '#007bff' : '#e6f4ea',
+                color: m.sender === 'user' ? '#fff' : '#28a745',
                 padding: '10px 16px',
-                borderRadius: '18px',
-                maxWidth: '70%',
-                wordWrap: 'break-word',
+                textAlign: m.sender === 'user' ? 'right' : 'left',
+                alignSelf: m.sender === 'user' ? 'flex-end' : 'flex-start',
               }}
             >
               {m.content.replace(/^"(.*)"$/, '$1')}
@@ -186,7 +190,7 @@ export function Chat({ setHasMessages }) {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
           disabled={loading}
-          placeholder="Type a message..."
+          placeholder=""
         />
         <button
           className="btn btn-primary"

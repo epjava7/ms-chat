@@ -1,6 +1,7 @@
 package com.example.supportservice.controller;
 
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestTemplate;
 import java.util.List;
 
 import com.example.supportservice.service.HotelChatbotClient;
@@ -20,7 +21,6 @@ public class SupportController {
         this.hotelChatbotClient = hotelChatbotClient;
     }
 
-    // send reply from agent
     @PostMapping("/reply")
     public void sendReply(@RequestParam String sessionId, @RequestBody String reply) {
         chatService.sendAgentReply(sessionId, reply);

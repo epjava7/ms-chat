@@ -18,20 +18,28 @@ import com.example.hotelchatbot.repository.ChatSessionRepository;
 @Service
 public class ChatbotAIService {
 
-    @Autowired
-    private FaqService faqService;
-    
-    @Autowired
-    private IntentDetectionService intentDetectionService;
+    private final FaqService faqService;
+    private final IntentDetectionService intentDetectionService;
+    private final OpenAiChatClient openAiChatClient;
+    private final HotelService hotelService;
+    private final ChatSessionRepository chatSessionRepository;
+    private final ChatWebSocketService chatWebSocketService;
 
-    @Autowired
-    private OpenAiChatClient openAiChatClient;
-
-    @Autowired
-    private HotelService hotelService;
-
-    @Autowired
-    private ChatSessionRepository chatSessionRepository;
+    public ChatbotAIService(
+        FaqService faqService,
+        IntentDetectionService intentDetectionService,
+        OpenAiChatClient openAiChatClient,
+        HotelService hotelService,
+        ChatSessionRepository chatSessionRepository,
+        ChatWebSocketService chatWebSocketService
+    ) {
+        this.faqService = faqService;
+        this.intentDetectionService = intentDetectionService;
+        this.openAiChatClient = openAiChatClient;
+        this.hotelService = hotelService;
+        this.chatSessionRepository = chatSessionRepository;
+        this.chatWebSocketService = chatWebSocketService;
+    }
 
     @CircuitBreaker(name = "openAiCB", fallbackMethod = "fallbackOpenAi")
     public String askOpenAi(ChatHistoryDTO chatHistoryDTO) {
@@ -169,11 +177,13 @@ public class ChatbotAIService {
             case "ESCALATE":
                 ChatSession session = chatSessionRepository.findById(chatHistoryDTO.getSessionId()).orElse(null);
                 if (session != null) {
-                    if (session.getUser() == null) {
+                    if (session.getUsername() == null || session.getUsername().isEmpty()) {
                         return "Log in to talk to a human agent";
                     }
                     session.setEscalated(true);
                     chatSessionRepository.save(session);
+
+                    chatWebSocketService.notifyAgentsOfEscalation(session.getId().toString());
                 }
                 return "transferring to human agent...";
 

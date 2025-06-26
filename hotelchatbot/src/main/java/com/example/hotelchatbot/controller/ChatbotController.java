@@ -9,13 +9,16 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import com.example.hotelchatbot.service.ChatWebSocketService;
 import com.example.hotelchatbot.service.ChatbotAIService;
 import com.example.hotelchatbot.domain.ChatSession;
+import com.example.hotelchatbot.domain.User;
 import com.example.hotelchatbot.dto.ChatHistoryDTO;
 import com.example.hotelchatbot.repository.ChatMessageRepository;
 import com.example.hotelchatbot.repository.ChatSessionRepository;
@@ -33,19 +36,22 @@ public class ChatbotController {
     private final ChatbotAIService chatbotAIService;
     private final SupportChatKafkaService supportChatKafkaService;
     private final UserRepository userRepository;
+    private final ChatWebSocketService chatWebSocketService;
 
     public ChatbotController(
         ChatSessionRepository chatSessionRepository,
         ChatMessageRepository chatMessageRepository,
         ChatbotAIService chatbotAIService,
         SupportChatKafkaService supportChatKafkaService,
-        UserRepository userRepository
+        UserRepository userRepository,
+        ChatWebSocketService chatWebSocketService
     ) {
         this.chatSessionRepository = chatSessionRepository;
         this.chatMessageRepository = chatMessageRepository;
         this.chatbotAIService = chatbotAIService;
         this.supportChatKafkaService = supportChatKafkaService;
         this.userRepository = userRepository;
+        this.chatWebSocketService = chatWebSocketService;
     }
 
     @GetMapping("/escalated-sessions")
@@ -54,11 +60,37 @@ public class ChatbotController {
     }
 
     @PostMapping("/session")
-    public ChatSession createSession() {
+    public ChatSession createSession(@RequestHeader(value = "X-User-Name", required = false) String username) {
         ChatSession session = new ChatSession();
         session.setEscalated(false);
+        session.setUsername(username); // Set username directly
         return chatSessionRepository.save(session);
     }
+
+    // @PostMapping("/session")
+    // public ChatSession createSession(@RequestHeader(value = "X-User-Name", required = false) String username) {
+    //     ChatSession session = new ChatSession();
+    //     session.setEscalated(false);
+    //     System.out.println("Creating session for user: " + username);
+    //     if (username != null) {
+    //         User user = userRepository.findByUsername(username);
+    //         if (user == null) {
+    //             user = new User();
+    //             user.setUsername(username);
+    //             user = userRepository.save(user);
+    //         }
+    //         session.setUser(user);
+    //     }
+    //     return chatSessionRepository.save(session);
+    // }
+    
+
+    // @PostMapping("/session")
+    // public ChatSession createSession() {
+    //     ChatSession session = new ChatSession();
+    //     session.setEscalated(false);
+    //     return chatSessionRepository.save(session);
+    // }
 
     @GetMapping("/session/{sessionId}/messages")
     public List<ChatMessage> getMessages(@PathVariable Long sessionId) {
@@ -78,40 +110,22 @@ public class ChatbotController {
         userMsg.setTimestamp(LocalDateTime.now());
         chatMessageRepository.save(userMsg);
 
-        // support via kafka
+        // send msg websocket
+        chatWebSocketService.sendMessageToSession(sessionId.toString(), content, "user");
+
         if (session.isEscalated()) {
             supportChatKafkaService.sendToSupport(sessionId.toString(), content);
-
-            boolean alreadyTransferred = chatMessageRepository
-                .findBySessionIdOrderByTimestampAsc(sessionId)
-                .stream()
-                .anyMatch(msg -> 
-                    "assistant".equals(msg.getSender()) && 
-                    "transferring to human agent...".equals(msg.getContent())
-                );
-
-            if (!alreadyTransferred) {
-                ChatMessage placeholder = new ChatMessage();
-                placeholder.setSession(session);
-                placeholder.setSender("assistant");
-                placeholder.setContent("transferring to human agent...");
-                placeholder.setTimestamp(LocalDateTime.now());
-                chatMessageRepository.save(placeholder);
-                return placeholder;
-            } else {
-                // latest agent or assistant message
-                List<ChatMessage> messages = chatMessageRepository.findBySessionIdOrderByTimestampAsc(sessionId);
-                for (int i = messages.size() - 1; i >= 0; i--) {
-                    ChatMessage msg = messages.get(i);
-                    if ("assistant".equals(msg.getSender()) || "agent".equals(msg.getSender())) {
-                        return msg;
-                    }
-                }
-                return messages.get(messages.size() - 1);
-            }
+            
+            ChatMessage placeholder = new ChatMessage();
+            placeholder.setSession(session);
+            placeholder.setSender("assistant");
+            placeholder.setContent("transferring to human agent...");
+            placeholder.setTimestamp(LocalDateTime.now());
+            chatMessageRepository.save(placeholder);
+            return placeholder;
         }
 
-        // build chat history, call AI
+        // get AI res
         List<ChatMessage> history = chatMessageRepository.findBySessionIdOrderByTimestampAsc(sessionId);
         String aiReply = chatbotAIService.askOpenAiFromEntities(history);
 
@@ -121,6 +135,9 @@ public class ChatbotController {
         aiMsg.setContent(aiReply);
         aiMsg.setTimestamp(LocalDateTime.now());
         chatMessageRepository.save(aiMsg);
+
+        // send ai message via websocket
+        chatWebSocketService.sendMessageToSession(sessionId.toString(), aiReply, "assistant");
 
         return aiMsg;
     }

@@ -12,10 +12,11 @@ public class ChatSession {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // user who owns the session
-    @ManyToOne
-    @JoinColumn(name = "user_id")
-    private User user;
+    // // user who owns the session
+    // @ManyToOne
+    // @JoinColumn(name = "user_id")
+    // private User user;
+    private String username;
 
     private boolean escalated = false;
 
@@ -26,8 +27,8 @@ public class ChatSession {
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
-    public User getUser() { return user; }
-    public void setUser(User user) { this.user = user; }
+    public String getUsername() { return username; }
+    public void setUsername(String username) { this.username = username; }
 
     public boolean isEscalated() { return escalated; }
     public void setEscalated(boolean escalated) { this.escalated = escalated; }

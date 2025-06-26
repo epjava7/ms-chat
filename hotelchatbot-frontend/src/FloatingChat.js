@@ -8,9 +8,12 @@ export function FloatingChat({ open, setOpen, setHasMessages }) {
     if (window.confirm('End chat?')) {
       const sessionId = localStorage.getItem('chatSessionId')
       if (sessionId) {
-        await fetch(`http://localhost:8081/api/chatbot/session/${sessionId}`, {
-          method: 'DELETE',
-        })
+        await fetch(
+          `http://localhost:8083/api/chatbot/api/chatbot/session/${sessionId}`,
+          {
+            method: 'DELETE',
+          }
+        )
         localStorage.removeItem('chatSessionId')
       }
       setOpen(false)
